@@ -1,64 +1,99 @@
-# RestFlow Android MVP
+# RestFlow
 
-RestFlow turns likely sleep into a once-per-night workflow trigger. Sleep detection,
-rules, execution history, and the returned morning note stay on the Android phone.
-The app has no hosted backend and no developer-owned LLM key.
+RestFlow is an Android app that runs a personal workflow when your phone detects that
+you are likely asleep. The workflow can prepare useful information while you rest and
+return a morning note when you wake up.
 
-## Cost model
+No smartwatch or additional hardware is required.
 
-- The developer pays no per-user AI bill.
-- Users connect an HTTPS webhook they own, such as n8n, Make, or a custom service.
-- If their workflow uses an LLM, they provide and pay for that model connection.
-- The app sends one small request after sleep is confirmed, not continuous telemetry.
-- Failed requests stop after three attempts, using exponential backoff.
-- Google Play services performs the low-power sleep classification on-device.
+## Features
 
-## MVP behavior
+- Phone-based sleep and wake detection
+- One workflow trigger per night
+- Configurable start time, cutoff time, and sleep confidence
+- Confirmation delay to reduce false triggers
+- Optional charging requirement
+- HTTPS webhook support for n8n, Make, and other services
+- Optional Bearer-token authentication
+- Morning note and estimated sleep duration
+- Morning notification and recent activity log
+- Automatic recovery after restarting the phone
+- Manual webhook test
 
-1. The user chooses a night window, confidence threshold, and confirmation delay.
-2. Google Play services sends low-power sleep classification updates.
-3. RestFlow confirms that confidence remained high inside the night window.
-4. A WorkManager job calls the user's webhook once for that night.
-5. If the response contains a morning note, RestFlow stores it locally.
-6. When wake-up is inferred, RestFlow adds estimated sleep duration and shows the note.
-7. Sleep detection is restored after device reboot or app replacement.
+## User guide
 
-Expected webhook response:
+### 1. Grant permissions
+
+Open RestFlow and select **Grant permissions**. Allow Physical Activity for sleep
+detection and Notifications for the morning result.
+
+### 2. Connect a workflow
+
+Create an HTTPS `POST` webhook in n8n, Make, or another compatible service.
+
+In RestFlow:
+
+1. Paste the production URL into **HTTPS webhook URL**.
+2. Add a Bearer token if your webhook requires one.
+3. Select **Test webhook now**.
+4. Select **Refresh** to view the returned result.
+
+The webhook should return:
 
 ```json
 {
   "title": "Good morning",
-  "body": "Your first meeting is at 09:30. Finish the proposal before lunch."
+  "body": "Your first meeting is at 9:30. Finish the proposal before lunch."
 }
 ```
 
-## Privacy and safety defaults
+Plain-text responses are also supported.
 
-- Raw movement, brightness, and classification history are not uploaded.
-- Only HTTPS endpoints are accepted.
-- Tokens are never supplied by the developer.
-- Workflows should prepare drafts and summaries, not send, publish, delete, or spend
-  without morning confirmation.
-- Phone-only sleep detection is an estimate, not a medical measurement.
+### 3. Configure sleep detection
 
-## Build
+Choose:
 
-The machine that generated this scaffold did not have Android Studio, an Android SDK,
-or Gradle installed, so the project could not be compiled locally.
+- **Start hour:** Earliest time sleep may be confirmed
+- **Cutoff hour:** End of the overnight window
+- **Sleep confidence:** Required confidence level
+- **Confirmation minutes:** How long confidence must remain high
+- **Only while charging:** Wait until the phone is connected to power
 
-1. Install Android Studio and Android SDK 36.
-2. Open this directory as a project.
-3. Use JDK 17 for Gradle.
-4. Let Android Studio sync dependencies.
-5. Run on an Android 10+ phone with Google Play services.
+Suggested starting values:
 
-## n8n setup
+```text
+Start hour: 23
+Cutoff hour: 5
+Sleep confidence: 80
+Confirmation minutes: 15
+```
 
-Create a workflow with:
+### 4. Activate RestFlow
 
-1. A `Webhook` node using `POST`.
-2. Optional Header/Bearer authentication matching the token entered in RestFlow.
-3. Calendar, task, email, research, or note-processing nodes owned by the user.
-4. A final response containing `title` and `body`.
+Enable **Night workflow** and select **Save and activate**.
 
-Keep the production webhook secret and rate-limit it on the n8n side.
+When sleep is confirmed, RestFlow calls the webhook once. When wake-up is detected,
+it adds the estimated sleep duration and shows the morning note.
+
+To stop sleep detection, disable **Night workflow** and save again.
+
+## Workflow ideas
+
+- Calendar and weather briefing
+- Prioritized task list
+- Email or meeting summary
+- Organized daily notes
+- Study summary or flashcards
+- Draft content for morning review
+
+## Troubleshooting
+
+- Confirm that the webhook begins with `https://`.
+- Use a production webhook URL rather than an inactive test URL.
+- Check the Bearer token and internet connection.
+- Allow Physical Activity and Notification permissions.
+- If charging is required, leave the phone connected to power.
+- Check **Recent activity** for errors.
+
+RestFlow provides phone-based sleep estimates. It is a productivity tool, not a
+medical device.
