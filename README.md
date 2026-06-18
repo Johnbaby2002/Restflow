@@ -22,6 +22,10 @@ No smartwatch or additional hardware is required.
 
 ## User guide
 
+For a ready-to-import connection, use the
+[example n8n workflow](examples/n8n/restflow-morning-brief.json) and follow its
+[connection guide](examples/n8n/README.md).
+
 ### 1. Grant permissions
 
 Open RestFlow and select **Grant permissions**. Allow Physical Activity for sleep

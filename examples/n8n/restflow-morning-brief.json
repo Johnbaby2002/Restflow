@@ -1,0 +1,86 @@
+{
+  "name": "RestFlow - Example Morning Brief",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "restflow-morning-brief",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "2d2e93d7-899f-4a8b-9078-e361c0319c9f",
+      "name": "RestFlow Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "9157c17b-228a-4a5d-94a2-a132862d0964"
+    },
+    {
+      "parameters": {
+        "jsCode": "const request = $input.first().json;\nconst body = request.body ?? request;\n\nconst event = body.event ?? 'unknown';\nconst receivedAt = body.timestamp ? new Date(body.timestamp) : new Date();\nconst isTest = event === 'manual_test';\n\nconst date = receivedAt.toLocaleDateString('en-US', {\n  weekday: 'long',\n  month: 'long',\n  day: 'numeric',\n  timeZone: 'UTC',\n});\n\nconst lines = [\n  isTest\n    ? 'Your RestFlow connection test completed successfully.'\n    : 'Your overnight RestFlow workflow completed successfully.',\n  '',\n  `Brief prepared for ${date}.`,\n  '',\n  'Morning checklist:',\n  '• Review today’s calendar',\n  '• Choose your three most important tasks',\n  '• Check urgent messages before opening everything else',\n  '• Start with one focused 25-minute work session',\n];\n\nreturn [{\n  json: {\n    title: isTest ? 'RestFlow connection works' : 'Good morning',\n    body: lines.join('\\n'),\n  },\n}];"
+      },
+      "id": "41b6b41a-599b-48fa-94ed-ff9cb955e4f0",
+      "name": "Build Morning Brief",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "0f1d146a-7dc3-437a-a08d-e09987dc6f69",
+      "name": "Return Morning Note",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        480,
+        0
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "RestFlow Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build Morning Brief",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Morning Brief": {
+      "main": [
+        [
+          {
+            "node": "Return Morning Note",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "f7207453-dc0e-42f3-8079-a7188caed5a4",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}
