@@ -1,31 +1,18 @@
 import { useEffect, useState } from "react";
 import {
   Activity, ArrowRight, Building2, Check, ChevronRight, CircleAlert,
-  Eye, FileText, Image, LayoutDashboard, Link2, Palette, Play, Plus,
-  RefreshCw, Search, Settings2, ShieldCheck, Upload, Users, Workflow, X,
+  Braces, Bug, Clock3, Copy, Download, Eye, FileText, History,
+  LayoutDashboard, LockKeyhole, Palette, Play, Plus, RefreshCw, Search,
+  Settings2, ShieldCheck, Trash2, Upload, Users, Webhook, Workflow, X,
 } from "lucide-react";
+import { api, timeAgo } from "./api";
 
 const navItems = [
   ["portals", LayoutDashboard, "Portals"],
   ["builder", Settings2, "Builder"],
   ["runs", Activity, "Runs"],
+  ["debug", Bug, "Debug"],
   ["approvals", ShieldCheck, "Approvals"],
-];
-
-const initialPortals = [
-  { id: 1, name: "Acme Finance", workflow: "Invoice review", clients: 8, runs: 142, color: "#ceff4f", status: "live" },
-  { id: 2, name: "Northstar Legal", workflow: "Contract intake", clients: 4, runs: 57, color: "#eda942", status: "draft" },
-];
-
-const initialRuns = [
-  { id: "RUN-1842", portal: "Acme Finance", action: "Invoice review", client: "Maya Chen", time: "2 min ago", status: "approval", result: "Possible duplicate payment · €1,240" },
-  { id: "RUN-1841", portal: "Acme Finance", action: "Invoice review", client: "Jon Bell", time: "18 min ago", status: "complete", result: "Approved expense · €348" },
-  { id: "RUN-1840", portal: "Northstar Legal", action: "Contract intake", client: "Sarah Kim", time: "1 hr ago", status: "failed", result: "Missing client reference" },
-];
-
-const initialApprovals = [
-  { id: 1, title: "Approve possible duplicate invoice", portal: "Acme Finance", client: "Maya Chen", amount: "€1,240", detail: "Invoice INV-903 resembles payment INV-851 from 12 days ago." },
-  { id: 2, title: "Send contract summary to client", portal: "Northstar Legal", client: "Sarah Kim", amount: null, detail: "The workflow prepared a 4-page contract summary and risk report." },
 ];
 
 const defaultForm = {
@@ -35,17 +22,47 @@ const defaultForm = {
   clientLabel: "Upload invoices for review",
   description: "Submit an invoice and receive structured checks, expense details, and approval status.",
   accent: "#ceff4f",
+  inputMapping: [
+    { id: "reference", label: "Invoice reference", type: "text", required: true, payloadPath: "invoice.reference", placeholder: "INV-2026-001" },
+    { id: "fileName", label: "Invoice file", type: "file", required: true, payloadPath: "invoice.fileName", placeholder: "" },
+  ],
+  outputMapping: [
+    { id: "summary", label: "Summary", responsePath: "result.summary", role: "summary" },
+    { id: "detail", label: "Details", responsePath: "result.detail", role: "detail" },
+    { id: "amount", label: "Amount", responsePath: "result.amount", role: "field" },
+    { id: "approval", label: "Requires approval", responsePath: "result.requiresApproval", role: "approval" },
+  ],
 };
 
 export default function App() {
   const [view, setView] = useState("portals");
-  const [portals, setPortals] = useState(initialPortals);
-  const [runs, setRuns] = useState(initialRuns);
-  const [approvals, setApprovals] = useState(initialApprovals);
+  const [portals, setPortals] = useState([]);
+  const [runs, setRuns] = useState([]);
+  const [approvals, setApprovals] = useState([]);
   const [form, setForm] = useState(defaultForm);
-  const [selectedPortal, setSelectedPortal] = useState(initialPortals[0]);
+  const [selectedPortal, setSelectedPortal] = useState(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [toast, setToast] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [debugRunId, setDebugRunId] = useState(null);
+  const [debugDetail, setDebugDetail] = useState(null);
+  const [debugLoading, setDebugLoading] = useState(false);
+
+  async function refreshData() {
+    const data = await api.bootstrap();
+    setPortals(data.portals);
+    setRuns(data.runs.map((run) => ({ ...run, time: timeAgo(run.createdAt) })));
+    setApprovals(data.approvals);
+    setSelectedPortal((current) =>
+      data.portals.find((portal) => portal.id === current?.id) || data.portals[0] || null);
+  }
+
+  useEffect(() => {
+    refreshData()
+      .catch((error) => setLoadError(error.message))
+      .finally(() => setLoading(false));
+  }, []);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -57,27 +74,47 @@ export default function App() {
     setForm((current) => ({ ...current, [key]: value }));
   }
 
-  function publishPortal() {
-    const existing = portals.find((portal) => portal.name === form.portalName);
-    if (existing) {
-      setPortals((current) => current.map((portal) =>
-        portal.id === existing.id
-          ? { ...portal, workflow: form.workflowName, color: form.accent, status: "live" }
-          : portal));
-    } else {
-      setPortals((current) => [{
-        id: Date.now(), name: form.portalName, workflow: form.workflowName,
-        clients: 0, runs: 0, color: form.accent, status: "live",
-      }, ...current]);
+  async function publishPortal() {
+    try {
+      const portal = await api.savePortal(form);
+      await refreshData();
+      setSelectedPortal(portal);
+      setToast("Client portal published");
+      setPreviewOpen(true);
+    } catch (error) {
+      setToast(error.message);
     }
-    setToast("Client portal published");
-    setPreviewOpen(true);
   }
 
-  function resolveApproval(id, outcome) {
-    const item = approvals.find((approval) => approval.id === id);
-    setApprovals((current) => current.filter((approval) => approval.id !== id));
-    setToast(`${item.title} ${outcome}`);
+  async function resolveApproval(id, outcome) {
+    try {
+      const item = approvals.find((approval) => approval.id === id);
+      await api.resolveApproval(id, outcome);
+      await refreshData();
+      setToast(`${item.title} ${outcome}`);
+    } catch (error) {
+      setToast(error.message);
+    }
+  }
+
+  async function openDebugger(runId) {
+    setView("debug");
+    setDebugRunId(runId);
+    setDebugLoading(true);
+    try {
+      setDebugDetail(await api.getRunDebug(runId));
+    } catch (error) {
+      setToast(error.message);
+    } finally {
+      setDebugLoading(false);
+    }
+  }
+
+  if (loading) {
+    return <div className="app-loading"><RefreshCw size={25} /> Loading FlowPortal…</div>;
+  }
+  if (loadError) {
+    return <div className="app-loading error"><CircleAlert size={25} /> Backend unavailable: {loadError}</div>;
   }
 
   return (
@@ -92,7 +129,16 @@ export default function App() {
             setSelectedPortal={setSelectedPortal}
             edit={(portal) => {
               setSelectedPortal(portal);
-              setForm((current) => ({ ...current, portalName: portal.name, workflowName: portal.workflow, accent: portal.color }));
+              setForm({
+                portalName: portal.name,
+                workflowName: portal.workflow,
+                webhook: portal.webhook,
+                clientLabel: portal.clientLabel,
+                description: portal.description,
+                accent: portal.color,
+                inputMapping: portal.inputMapping,
+                outputMapping: portal.outputMapping,
+              });
               setView("builder");
             }}
             preview={(portal) => {
@@ -105,7 +151,41 @@ export default function App() {
         {view === "builder" && (
           <BuilderView form={form} updateForm={updateForm} publish={publishPortal} preview={() => setPreviewOpen(true)} />
         )}
-        {view === "runs" && <RunsView runs={runs} retry={(run) => setToast(`${run.id} queued again`)} />}
+        {view === "runs" && (
+          <RunsView
+            runs={runs}
+            debug={openDebugger}
+            retry={async (run) => {
+              try {
+                await api.retryRun(run.id);
+                await refreshData();
+                setToast(`${run.id} completed`);
+              } catch (error) {
+                setToast(error.message);
+              }
+            }}
+          />
+        )}
+        {view === "debug" && (
+          <DebuggerView
+            runs={runs}
+            selectedId={debugRunId}
+            detail={debugDetail}
+            loading={debugLoading}
+            select={openDebugger}
+            replay={async (runId) => {
+              try {
+                await api.retryRun(runId);
+                await refreshData();
+                setDebugDetail(await api.getRunDebug(runId));
+                setToast(`${runId} replayed`);
+              } catch (error) {
+                setToast(error.message);
+              }
+            }}
+            notify={setToast}
+          />
+        )}
         {view === "approvals" && (
           <ApprovalsView
             approvals={approvals}
@@ -117,12 +197,26 @@ export default function App() {
       <MobileNav view={view} setView={setView} approvalCount={approvals.length} />
       {previewOpen && (
         <ClientPortal
-          form={form}
+          config={view === "builder" ? form : selectedPortal ? {
+            portalName: selectedPortal.name,
+            workflowName: selectedPortal.workflow,
+            webhook: selectedPortal.webhook,
+            clientLabel: selectedPortal.clientLabel,
+            description: selectedPortal.description,
+            accent: selectedPortal.color,
+            inputMapping: selectedPortal.inputMapping,
+            outputMapping: selectedPortal.outputMapping,
+          } : form}
           portal={selectedPortal}
+          runs={runs.filter((run) => run.portal === (selectedPortal?.name || form.portalName))}
           close={() => setPreviewOpen(false)}
-          submit={(submission) => {
-            setRuns((current) => [submission, ...current]);
-            setToast("Workflow started");
+          submit={async (input) => {
+            const targetPortal = selectedPortal || portals[0];
+            if (!targetPortal) throw new Error("No portal is selected");
+            const result = await api.runPortal(targetPortal.id, input);
+            await refreshData();
+            setToast("Workflow completed");
+            return result;
           }}
         />
       )}
@@ -198,7 +292,7 @@ function PortalsView({ portals, selectedPortal, setSelectedPortal, edit, preview
             {portals.map((portal) => (
               <button
                 key={portal.id}
-                className={`portal-row ${selectedPortal.id === portal.id ? "active" : ""}`}
+                className={`portal-row ${selectedPortal?.id === portal.id ? "active" : ""}`}
                 onClick={() => setSelectedPortal(portal)}
               >
                 <span className="portal-logo" style={{ "--portal-color": portal.color }}>{portal.name.slice(0, 2).toUpperCase()}</span>
@@ -209,7 +303,7 @@ function PortalsView({ portals, selectedPortal, setSelectedPortal, edit, preview
             ))}
           </div>
         </div>
-        <div className="panel portal-detail">
+        {selectedPortal && <div className="panel portal-detail">
           <div className="portal-banner" style={{ "--portal-color": selectedPortal.color }}>
             <span className="eyebrow">CLIENT PORTAL</span>
             <h2>{selectedPortal.name}</h2>
@@ -224,13 +318,56 @@ function PortalsView({ portals, selectedPortal, setSelectedPortal, edit, preview
             <button className="secondary-button" onClick={() => edit(selectedPortal)}><Settings2 size={15} /> Edit portal</button>
             <button className="primary-button" onClick={() => preview(selectedPortal)}><Eye size={15} /> Open client view</button>
           </div>
-        </div>
+        </div>}
       </div>
     </section>
   );
 }
 
 function BuilderView({ form, updateForm, publish, preview }) {
+  const [sampleResponse, setSampleResponse] = useState(`{
+  "result": {
+    "summary": "Invoice reviewed",
+    "detail": "No duplicate payment found",
+    "amount": "€348",
+    "requiresApproval": false
+  }
+}`);
+  const [mappingTest, setMappingTest] = useState(null);
+  const updateInput = (index, key, value) => {
+    const next = form.inputMapping.map((item, itemIndex) =>
+      itemIndex === index ? { ...item, [key]: value } : item);
+    updateForm("inputMapping", next);
+  };
+  const updateOutput = (index, key, value) => {
+    const next = form.outputMapping.map((item, itemIndex) =>
+      itemIndex === index ? { ...item, [key]: value } : item);
+    updateForm("outputMapping", next);
+  };
+  const addInput = () => updateForm("inputMapping", [
+    ...form.inputMapping,
+    { id: `field_${Date.now()}`, label: "New field", type: "text", required: false, payloadPath: "input.newField", placeholder: "" },
+  ]);
+  const addOutput = () => updateForm("outputMapping", [
+    ...form.outputMapping,
+    { id: `output_${Date.now()}`, label: "Result field", responsePath: "result.value", role: "field" },
+  ]);
+  const testMapping = () => {
+    try {
+      const data = JSON.parse(sampleResponse);
+      setMappingTest({
+        ok: true,
+        values: form.outputMapping.map((item) => ({
+          label: item.label,
+          value: getObjectPath(data, item.responsePath),
+          role: item.role,
+        })),
+      });
+    } catch (error) {
+      setMappingTest({ ok: false, error: error.message });
+    }
+  };
+
   return (
     <section className="view builder-layout">
       <div className="panel builder-settings">
@@ -245,6 +382,68 @@ function BuilderView({ form, updateForm, publish, preview }) {
           <SectionTitle icon={Workflow} title="n8n workflow" />
           <label>Workflow name<input value={form.workflowName} onChange={(event) => updateForm("workflowName", event.target.value)} /></label>
           <label>Production webhook<input value={form.webhook} onChange={(event) => updateForm("webhook", event.target.value)} /></label>
+        </div>
+        <div className="form-section mapping-section">
+          <div className="mapping-title">
+            <SectionTitle icon={Braces} title="Portal inputs → n8n payload" />
+            <button onClick={addInput}><Plus size={14} /> Add field</button>
+          </div>
+          <p className="mapping-help">Each client field is written to the JSON path you choose.</p>
+          {form.inputMapping.map((field, index) => (
+            <div className="mapping-row input-map" key={field.id}>
+              <input aria-label={`Input label ${index + 1}`} value={field.label} onChange={(event) => updateInput(index, "label", event.target.value)} placeholder="Field label" />
+              <select aria-label={`Input type ${index + 1}`} value={field.type} onChange={(event) => updateInput(index, "type", event.target.value)}>
+                <option value="text">Text</option>
+                <option value="email">Email</option>
+                <option value="number">Number</option>
+                <option value="textarea">Long text</option>
+                <option value="file">File</option>
+              </select>
+              <span className="mapping-arrow">→</span>
+              <input aria-label={`Payload path ${index + 1}`} value={field.payloadPath} onChange={(event) => updateInput(index, "payloadPath", event.target.value)} placeholder="customer.email" />
+              <label className="required-toggle"><input type="checkbox" checked={field.required} onChange={(event) => updateInput(index, "required", event.target.checked)} /> Required</label>
+              <button className="remove-map" aria-label={`Remove ${field.label}`} onClick={() => updateForm("inputMapping", form.inputMapping.filter((_, itemIndex) => itemIndex !== index))}><X size={14} /></button>
+            </div>
+          ))}
+        </div>
+        <div className="form-section mapping-section">
+          <div className="mapping-title">
+            <SectionTitle icon={Braces} title="n8n response → portal results" />
+            <button onClick={addOutput}><Plus size={14} /> Add result</button>
+          </div>
+          <p className="mapping-help">Read values from the n8n JSON response and choose how they appear.</p>
+          {form.outputMapping.map((field, index) => (
+            <div className="mapping-row output-map" key={field.id}>
+              <input aria-label={`Output label ${index + 1}`} value={field.label} onChange={(event) => updateOutput(index, "label", event.target.value)} placeholder="Result label" />
+              <span className="mapping-arrow">←</span>
+              <input aria-label={`Response path ${index + 1}`} value={field.responsePath} onChange={(event) => updateOutput(index, "responsePath", event.target.value)} placeholder="result.amount" />
+              <select aria-label={`Output role ${index + 1}`} value={field.role} onChange={(event) => updateOutput(index, "role", event.target.value)}>
+                <option value="field">Result field</option>
+                <option value="summary">Headline</option>
+                <option value="detail">Description</option>
+                <option value="approval">Approval flag</option>
+              </select>
+              <button className="remove-map" aria-label={`Remove ${field.label}`} onClick={() => updateForm("outputMapping", form.outputMapping.filter((_, itemIndex) => itemIndex !== index))}><X size={14} /></button>
+            </div>
+          ))}
+          <div className="mapping-preview">
+            <div><span>Outgoing payload</span><pre>{JSON.stringify(buildMappingPreview(form.inputMapping), null, 2)}</pre></div>
+            <div><span>Expected response paths</span><pre>{form.outputMapping.map((item) => `${item.label}: ${item.responsePath}`).join("\n")}</pre></div>
+          </div>
+          <div className="mapping-tester">
+            <div className="mapping-title">
+              <SectionTitle icon={Play} title="Test with sample n8n response" />
+              <button onClick={testMapping}><Play size={13} /> Test mapping</button>
+            </div>
+            <textarea aria-label="Sample n8n response" value={sampleResponse} onChange={(event) => setSampleResponse(event.target.value)} />
+            {mappingTest && (
+              <div className={`mapping-test-result ${mappingTest.ok ? "ok" : "error"}`}>
+                {mappingTest.ok
+                  ? mappingTest.values.map((item) => <span key={`${item.label}-${item.role}`}><b>{item.label}</b>{item.value === undefined ? "Path not found" : String(item.value)}</span>)
+                  : <span>{mappingTest.error}</span>}
+              </div>
+            )}
+          </div>
         </div>
         <div className="form-section">
           <SectionTitle icon={Palette} title="Brand color" />
@@ -264,6 +463,28 @@ function BuilderView({ form, updateForm, publish, preview }) {
   );
 }
 
+function buildMappingPreview(mapping) {
+  const payload = {};
+  mapping.forEach((field) => {
+    const value = field.type === "number" ? 42 : field.type === "file" ? "document.pdf" : `<${field.id}>`;
+    setObjectPath(payload, field.payloadPath, value);
+  });
+  return payload;
+}
+
+function setObjectPath(target, path, value) {
+  const parts = String(path || "").split(".").filter(Boolean);
+  let cursor = target;
+  parts.forEach((part, index) => {
+    if (index === parts.length - 1) cursor[part] = value;
+    else cursor = cursor[part] ??= {};
+  });
+}
+
+function getObjectPath(target, path) {
+  return String(path || "").split(".").filter(Boolean).reduce((value, key) => value?.[key], target);
+}
+
 function PortalMockup({ form }) {
   return (
     <div className="device-preview">
@@ -272,8 +493,13 @@ function PortalMockup({ form }) {
         <div className="client-brand"><span>{form.portalName.slice(0, 2).toUpperCase()}</span><strong>{form.portalName}</strong></div>
         <div className="client-hero"><small>WORKFLOW PORTAL</small><h2>{form.clientLabel}</h2><p>{form.description}</p></div>
         <div className="client-form-card">
-          <label>Invoice reference<input placeholder="INV-2026-001" readOnly /></label>
-          <label>Upload file<div className="upload-box"><Upload size={22} /><span>Drop PDF or click to browse</span></div></label>
+          {(form.inputMapping ?? []).slice(0, 3).map((field) => (
+            <label key={field.id}>{field.label}
+              {field.type === "file"
+                ? <div className="upload-box"><Upload size={22} /><span>Drop file or click to browse</span></div>
+                : <input placeholder={field.placeholder || `Enter ${field.label.toLowerCase()}`} readOnly />}
+            </label>
+          ))}
           <button style={{ background: form.accent }}>Run {form.workflowName}</button>
         </div>
       </div>
@@ -281,7 +507,7 @@ function PortalMockup({ form }) {
   );
 }
 
-function RunsView({ runs, retry }) {
+function RunsView({ runs, retry, debug }) {
   return (
     <section className="view">
       <div className="panel">
@@ -295,10 +521,90 @@ function RunsView({ runs, retry }) {
               <span className={`run-state ${run.status}`}>{run.status === "complete" ? <Check size={16} /> : run.status === "failed" ? <X size={16} /> : <CircleAlert size={16} />}</span>
               <div><strong>{run.action}</strong><small>{run.portal} · {run.client}</small></div>
               <div className="run-result"><strong>{run.result}</strong><small>{run.id} · {run.time}</small></div>
-              {run.status === "failed" ? <button className="secondary-button" onClick={() => retry(run)}>Retry</button> : <Status status={run.status} />}
+              <div className="run-actions">
+                <button className="debug-button" onClick={() => debug(run.id)}><Bug size={14} /> Debug</button>
+                {run.status === "failed" ? <button className="secondary-button" onClick={() => retry(run)}>Retry</button> : <Status status={run.status} />}
+              </div>
             </article>
           ))}
         </div>
+      </div>
+    </section>
+  );
+}
+
+function DebuggerView({ runs, selectedId, detail, loading, select, replay, notify }) {
+  const [payloadTab, setPayloadTab] = useState("request");
+
+  useEffect(() => {
+    if (!selectedId && runs[0]) select(runs[0].id);
+  }, [selectedId, runs]);
+
+  return (
+    <section className="view debugger-layout">
+      <div className="panel debug-run-list">
+        <div className="panel-header compact">
+          <div><span className="eyebrow">EXECUTIONS</span><h2>Debug runs</h2></div>
+          <Bug size={18} />
+        </div>
+        {runs.map((run) => (
+          <button key={run.id} className={`debug-run-item ${selectedId === run.id ? "active" : ""}`} onClick={() => select(run.id)}>
+            <span className={`debug-run-dot ${run.status}`} />
+            <span><strong>{run.action}</strong><small>{run.id} · {run.portal}</small></span>
+            <Status status={run.status} />
+          </button>
+        ))}
+      </div>
+
+      <div className="panel debug-detail">
+        {loading && <div className="debug-empty"><RefreshCw className="spin" size={24} /> Loading execution…</div>}
+        {!loading && !detail && <div className="debug-empty"><Bug size={28} /> Select a run to inspect it.</div>}
+        {!loading && detail && (
+          <>
+            <div className="panel-header debug-header">
+              <div>
+                <span className="eyebrow">{detail.id} · {detail.portal}</span>
+                <h2>{detail.workflow}</h2>
+              </div>
+              <div className="debug-toolbar">
+                <button className="secondary-button" onClick={() => notify("Debug bundle copied")}><Copy size={15} /> Copy bundle</button>
+                <button className="primary-button" onClick={() => replay(detail.id)}><Play size={15} /> Replay run</button>
+              </div>
+            </div>
+
+            <div className={`diagnosis-card ${detail.status}`}>
+              {detail.status === "failed" ? <CircleAlert size={20} /> : detail.status === "approval" ? <Clock3 size={20} /> : <Check size={20} />}
+              <div><strong>{detail.status === "failed" ? "Failure diagnosed" : detail.status === "approval" ? "Paused intentionally" : "Execution healthy"}</strong><span>{detail.diagnosis}</span></div>
+            </div>
+
+            <div className="debug-meta">
+              <div><Webhook size={16} /><span>Webhook</span><strong>{detail.webhook}</strong></div>
+              <div><Activity size={16} /><span>Status</span><strong>{detail.status}</strong></div>
+              <div><Clock3 size={16} /><span>Started</span><strong>{timeAgo(detail.createdAt)}</strong></div>
+            </div>
+
+            <div className="execution-timeline">
+              <div className="debug-section-title"><span>Execution timeline</span><small>{detail.steps.length} steps</small></div>
+              {detail.steps.map((step, index) => (
+                <div className={`execution-step ${step.status}`} key={step.name}>
+                  <span className="step-index">{String(index + 1).padStart(2, "0")}</span>
+                  <span className="step-icon">{step.status === "success" ? <Check size={14} /> : step.status === "failed" ? <X size={14} /> : step.status === "waiting" ? <Clock3 size={14} /> : <span>—</span>}</span>
+                  <div><strong>{step.name}</strong>{step.message && <p>{step.message}</p>}</div>
+                  <time>{step.duration}</time>
+                </div>
+              ))}
+            </div>
+
+            <div className="payload-inspector">
+              <div className="payload-tabs">
+                <button className={payloadTab === "request" ? "active" : ""} onClick={() => setPayloadTab("request")}><Braces size={15} /> Request</button>
+                <button className={payloadTab === "response" ? "active" : ""} onClick={() => setPayloadTab("response")}><Braces size={15} /> Response</button>
+                <button className="copy-payload" onClick={() => notify(`${payloadTab} payload copied`)}><Copy size={14} /> Copy JSON</button>
+              </div>
+              <pre>{JSON.stringify(payloadTab === "request" ? detail.request : detail.response, null, 2)}</pre>
+            </div>
+          </>
+        )}
       </div>
     </section>
   );
@@ -330,66 +636,187 @@ function ApprovalsView({ approvals, approve, reject }) {
   );
 }
 
-function ClientPortal({ form, portal, close, submit }) {
-  const [reference, setReference] = useState("");
-  const [file, setFile] = useState("");
+function ClientPortal({ config, portal, runs, close, submit }) {
+  const [values, setValues] = useState({});
   const [state, setState] = useState("form");
+  const [section, setSection] = useState("submit");
+  const [workflowResult, setWorkflowResult] = useState(null);
+  const [submitError, setSubmitError] = useState("");
 
-  function runWorkflow() {
+  async function runWorkflow() {
+    setSubmitError("");
     setState("running");
-    setTimeout(() => {
-      setState("result");
-      submit({
-        id: `RUN-${Math.floor(2000 + Math.random() * 7000)}`,
-        portal: form.portalName || portal.name,
-        action: form.workflowName || portal.workflow,
+    try {
+      const response = await submit({
         client: "Demo Client",
-        time: "just now",
-        status: "approval",
-        result: "Invoice requires approval · €1,240",
+        inputs: values,
       });
-    }, 900);
+      setState("result");
+      setWorkflowResult(response.workflowResult);
+    } catch (error) {
+      setState("form");
+      setSubmitError(error.message);
+    }
   }
+
+  const inputMapping = config.inputMapping?.length ? config.inputMapping : defaultForm.inputMapping;
+  const requiredComplete = inputMapping
+    .filter((field) => field.required)
+    .every((field) => String(values[field.id] ?? "").trim());
+  const referenceValue = values.reference ?? Object.values(values).find((value) => typeof value === "string") ?? "";
+  const fileValue = values.fileName ?? Object.entries(values).find(([key]) => key.toLowerCase().includes("file"))?.[1] ?? "";
+  const updateValue = (id, value) => setValues((current) => ({ ...current, [id]: value }));
 
   return (
     <div className="client-overlay">
-      <button className="close-preview" onClick={close}><X size={18} /> Exit client view</button>
-      <div className="live-client-page" style={{ "--client-accent": form.accent || portal.color }}>
+      <div className="live-client-page" style={{ "--client-accent": config.accent || portal?.color || "#ceff4f" }}>
         <div className="live-client-nav">
-          <div className="client-brand"><span>{(form.portalName || portal.name).slice(0, 2).toUpperCase()}</span><strong>{form.portalName || portal.name}</strong></div>
-          <div className="client-user">MC</div>
+          <div className="client-brand"><span>{(config.portalName || portal?.name || "FP").slice(0, 2).toUpperCase()}</span><strong>{config.portalName || portal?.name || "FlowPortal"}</strong></div>
+          <div className="client-nav-actions">
+            <span className="secure-label"><LockKeyhole size={13} /> Secure portal</span>
+            <button className="client-user" aria-label="Client account">MC</button>
+            <button className="client-exit" onClick={close} aria-label="Exit client view"><X size={17} /></button>
+          </div>
         </div>
-        <main>
-          {state !== "result" && (
+
+        <div className="client-workspace">
+          <aside className="client-sidebar">
+            <div>
+              <small>WORKSPACE</small>
+              <button className={section === "submit" ? "active" : ""} onClick={() => setSection("submit")}>
+                <Upload size={17} /> New submission
+              </button>
+              <button className={section === "history" ? "active" : ""} onClick={() => setSection("history")}>
+                <History size={17} /> Run history <b>{runs.length}</b>
+              </button>
+            </div>
+            <div className="client-help">
+              <ShieldCheck size={18} />
+              <strong>Your data is protected</strong>
+              <span>Files are sent only to your connected workflow.</span>
+            </div>
+          </aside>
+
+          <main className="client-main">
+          {section === "submit" && state !== "result" && (
             <>
-              <div className="client-hero"><small>SECURE CLIENT PORTAL</small><h1>{form.clientLabel}</h1><p>{form.description}</p></div>
+              <div className="client-hero">
+                <small>NEW WORKFLOW SUBMISSION</small>
+                <h1>{config.clientLabel}</h1>
+                <p>{config.description}</p>
+                <div className="client-expectations">
+                  <span><Clock3 size={15} /> Usually completes in under 2 minutes</span>
+                  <span><ShieldCheck size={15} /> Human approval before sensitive actions</span>
+                </div>
+              </div>
               <div className="live-form-card">
-                <label>Invoice reference<input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="INV-2026-001" /></label>
-                <label>Invoice file
-                  <button className={`upload-box ${file ? "has-file" : ""}`} onClick={() => setFile("invoice-acme-903.pdf")}>
-                    {file ? <FileText size={24} /> : <Upload size={24} />}
-                    <span>{file || "Choose a PDF invoice"}</span>
+                <div className="form-heading">
+                  <div><span>01</span><strong>Submission details</strong></div>
+                  <small>All fields marked required</small>
+                </div>
+                {inputMapping.map((field) => (
+                  <label key={field.id}>{field.label} {field.required && <em>Required</em>}
+                    {field.type === "file" ? (
+                      <button className={`upload-box ${values[field.id] ? "has-file" : ""}`} onClick={() => updateValue(field.id, `${field.id}-upload.pdf`)}>
+                        {values[field.id] ? (
+                          <>
+                            <span className="file-icon"><FileText size={23} /></span>
+                            <span className="file-copy"><strong>{values[field.id]}</strong><small>PDF · 284 KB · Ready to submit</small></span>
+                            <span className="remove-file" onClick={(event) => { event.stopPropagation(); updateValue(field.id, ""); }}><Trash2 size={16} /></span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="file-icon"><Upload size={23} /></span>
+                            <span className="file-copy"><strong>Choose a file or drop it here</strong><small>Maximum file size: 10 MB</small></span>
+                          </>
+                        )}
+                      </button>
+                    ) : field.type === "textarea" ? (
+                      <textarea value={values[field.id] ?? ""} onChange={(event) => updateValue(field.id, event.target.value)} placeholder={field.placeholder || `Enter ${field.label.toLowerCase()}`} />
+                    ) : (
+                      <input type={field.type} value={values[field.id] ?? ""} onChange={(event) => updateValue(field.id, field.type === "number" ? Number(event.target.value) : event.target.value)} placeholder={field.placeholder || `Enter ${field.label.toLowerCase()}`} />
+                    )}
+                  </label>
+                ))}
+                {state === "running" ? (
+                  <div className="workflow-progress">
+                    <div className="progress-top"><span>Processing your submission</span><strong>68%</strong></div>
+                    <div className="progress-track"><i /></div>
+                    <div className="progress-steps">
+                      <span className="done"><Check size={13} /> File received</span>
+                      <span className="done"><Check size={13} /> Data extracted</span>
+                      <span className="active"><RefreshCw size={13} /> Running checks</span>
+                    </div>
+                  </div>
+                ) : (
+                  <button className="client-run-button" disabled={!requiredComplete} onClick={runWorkflow}>
+                    Run {config.workflowName} <ArrowRight size={17} />
                   </button>
-                </label>
-                <button className="client-run-button" disabled={state === "running"} onClick={runWorkflow}>
-                  {state === "running" ? "Running workflow…" : `Run ${form.workflowName}`}
-                </button>
+                )}
+                <div className="submit-footnote">
+                  <LockKeyhole size={13} /> Your submission is encrypted in transit.
+                </div>
+                {submitError && <p className="client-error">{submitError}</p>}
               </div>
             </>
           )}
-          {state === "result" && (
-            <div className="client-result">
-              <span className="result-alert"><CircleAlert size={24} /></span>
-              <small>WORKFLOW COMPLETE</small>
-              <h1>Review required</h1>
-              <p>This invoice resembles a payment made 12 days ago.</p>
-              <div><span>Vendor</span><strong>Acme Supplies GmbH</strong></div>
-              <div><span>Amount</span><strong>€1,240</strong></div>
-              <div><span>Reference</span><strong>{reference || "INV-2026-001"}</strong></div>
-              <button onClick={() => setState("form")}>Submit another invoice</button>
+
+          {section === "submit" && state === "result" && (
+            <div className="client-result-page">
+              <button className="result-back" onClick={() => {
+                setState("form");
+                setWorkflowResult(null);
+              }}><ArrowRight size={15} /> Back to submission</button>
+              <div className="client-result">
+                <div className="result-header">
+                  <span className={workflowResult?.status === "approval" ? "result-alert" : "result-success"}>
+                    {workflowResult?.status === "approval" ? <CircleAlert size={25} /> : <Check size={25} />}
+                  </span>
+                  <div><small>WORKFLOW COMPLETE</small><h1>{workflowResult?.status === "approval" ? "Review required" : "Completed successfully"}</h1></div>
+                </div>
+                <p className="result-summary">{workflowResult?.detail || workflowResult?.summary || "The workflow completed successfully."}</p>
+                <div className="result-grid">
+                  <div><span>Status</span><strong>{workflowResult?.status || "complete"}</strong></div>
+                  {workflowResult?.amount && <div><span>Amount</span><strong>{workflowResult.amount}</strong></div>}
+                  {(workflowResult?.fields ?? []).map((field) => (
+                    <div key={field.id}><span>{field.label}</span><strong>{String(field.value)}</strong></div>
+                  ))}
+                  <div><span>Reference</span><strong>{referenceValue || "—"}</strong></div>
+                  {fileValue && <div><span>File</span><strong>{fileValue}</strong></div>}
+                </div>
+                {workflowResult?.status === "approval" && (
+                  <div className="next-step"><ShieldCheck size={20} /><div><strong>What happens next?</strong><span>Your agency has been notified. The workflow will continue after approval.</span></div></div>
+                )}
+                <div className="result-actions">
+                  <button className="client-secondary"><Download size={16} /> Download report</button>
+                  <button onClick={() => {
+                    setState("form");
+                    setWorkflowResult(null);
+                    setValues({});
+                  }}>Submit another invoice</button>
+                </div>
+              </div>
             </div>
           )}
-        </main>
+
+          {section === "history" && (
+            <div className="client-history">
+              <div className="history-heading"><div><small>WORKFLOW ACTIVITY</small><h1>Run history</h1><p>Track every submission and its current status.</p></div><button onClick={() => setSection("submit")}><Plus size={16} /> New submission</button></div>
+              <div className="history-card">
+                {runs.map((run) => (
+                  <article className="client-run-row" key={run.id}>
+                    <span className={`client-run-icon ${run.status}`}>{run.status === "complete" ? <Check size={16} /> : run.status === "failed" ? <X size={16} /> : <Clock3 size={16} />}</span>
+                    <div><strong>{run.action}</strong><small>{run.reference || run.id} · {run.fileName || "Uploaded file"}</small></div>
+                    <div><strong>{run.result}</strong><small>{run.time}</small></div>
+                    <span className={`client-status ${run.status}`}>{run.status}</span>
+                  </article>
+                ))}
+                {!runs.length && <div className="client-empty"><History size={25} /><strong>No submissions yet</strong><span>Your workflow history will appear here.</span></div>}
+              </div>
+            </div>
+          )}
+          </main>
+        </div>
       </div>
     </div>
   );
@@ -400,7 +827,7 @@ function Metric({ icon: Icon, label, value, tone = "" }) {
 }
 
 function Status({ status }) {
-  const labels = { live: "Live", draft: "Draft", complete: "Complete", approval: "Approval" };
+  const labels = { live: "Live", draft: "Draft", complete: "Complete", approval: "Approval", rejected: "Rejected" };
   return <span className={`status-badge ${status}`}><i /> {labels[status] || status}</span>;
 }
 
