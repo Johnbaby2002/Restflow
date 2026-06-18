@@ -4,4 +4,6 @@ local.properties
 build/
 **/build/
 *.iml
-
+node_modules/
+dist/
+preview/*.png
